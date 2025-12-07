@@ -56,6 +56,18 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Request timeout middleware
+app.use((req, res, next) => {
+  // Set timeout for all requests (30 seconds)
+  req.setTimeout(30000, () => {
+    console.error('Request timeout:', req.method, req.path);
+    res.status(408).json({
+      success: false,
+      message: 'Request timeout'
+    });
+  });
+  next();
+});
 // Static files for uploads
 app.use('/uploads', express.static('uploads'));
 
@@ -101,3 +113,21 @@ app.listen(PORT, () => {
   console.log("DB CONFIG:", process.env.DB_NAME, process.env.DB_PORT);
 
 });
+
+// Add after server starts
+setInterval(() => {
+  const used = process.memoryUsage();
+  const memoryMB = {
+    rss: Math.round(used.rss / 1024 / 1024),
+    heapTotal: Math.round(used.heapTotal / 1024 / 1024),
+    heapUsed: Math.round(used.heapUsed / 1024 / 1024),
+    external: Math.round(used.external / 1024 / 1024),
+  };
+  
+  console.log('Memory Usage (MB):', memoryMB);
+  
+  // Alert if memory usage is high
+  if (memoryMB.heapUsed > 500) {
+    console.warn('⚠️  High memory usage detected!');
+  }
+}, 60000); // Check every minute

@@ -617,16 +617,22 @@ router.post('/attendance/homeroom', [
       });
     }
 
+    // Get current time for check-in
+    const checkInTime = new Date().toTimeString().split(' ')[0]; // HH:MM:SS format
+
     // Save attendance
     await transaction(async (client) => {
       for (const record of attendance_list) {
         await client.query(
           `INSERT INTO attendance 
-           (student_id, teacher_id, room_id, attendance_date, status, attendance_type)
-           VALUES ($1, $2, $3, $4, $5, 'homeroom')
+           (student_id, teacher_id, room_id, attendance_date, status, attendance_type, check_in_time)
+           VALUES ($1, $2, $3, $4, $5, 'homeroom', $6)
            ON CONFLICT (student_id, attendance_date, attendance_type, period_number)
-           DO UPDATE SET status = $5, teacher_id = $2`,
-          [record.student_id, teacher.id, room_id, attendance_date, record.status]
+           DO UPDATE SET 
+             status = $5, 
+             teacher_id = $2,
+             check_in_time = $6`,
+          [record.student_id, teacher.id, room_id, attendance_date, record.status, checkInTime]
         );
       }
     });
@@ -690,16 +696,23 @@ router.post('/attendance/subject', [
       });
     }
 
+    // Get current time for check-in
+    const checkInTime = new Date().toTimeString().split(' ')[0]; // HH:MM:SS format
+
     // Save attendance
     await transaction(async (client) => {
       for (const record of attendance_list) {
         await client.query(
           `INSERT INTO attendance 
-           (student_id, teacher_id, room_id, subject_id, attendance_date, period_number, status, attendance_type)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'subject')
+           (student_id, teacher_id, room_id, subject_id, attendance_date, period_number, status, attendance_type, check_in_time)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'subject', $8)
            ON CONFLICT (student_id, attendance_date, attendance_type, period_number)
-           DO UPDATE SET status = $7, teacher_id = $2, subject_id = $4`,
-          [record.student_id, teacherId, room_id, subject_id, attendance_date, period_number, record.status]
+           DO UPDATE SET 
+             status = $7, 
+             teacher_id = $2, 
+             subject_id = $4,
+             check_in_time = $8`,
+          [record.student_id, teacherId, room_id, subject_id, attendance_date, period_number, record.status, checkInTime]
         );
       }
     });
@@ -723,7 +736,7 @@ router.post('/attendance/subject', [
 // @access  Teacher
 router.get('/attendance/history', async (req, res) => {
   try {
-    const { room_id, start_date, end_date } = req.query;
+    const { room_id, start_date, end_date, attendance_type } = req.query;
 
     // Get teacher id
     const teacherResult = await query(
@@ -734,8 +747,14 @@ router.get('/attendance/history', async (req, res) => {
     const teacherId = teacherResult.rows[0].id;
 
     let queryText = `
-      SELECT a.*, s.full_name as student_name, s.student_id,
-             r.name as room_name, sub.subject_name
+      SELECT 
+        a.*,
+        s.full_name as student_name, 
+        s.student_id,
+        s.student_number,
+        r.name as room_name, 
+        sub.subject_name,
+        sub.subject_code
       FROM attendance a
       INNER JOIN students s ON a.student_id = s.id
       INNER JOIN rooms r ON a.room_id = r.id
@@ -759,7 +778,12 @@ router.get('/attendance/history', async (req, res) => {
       queryText += ` AND a.attendance_date <= $${params.length}`;
     }
 
-    queryText += ' ORDER BY a.attendance_date DESC, s.student_number';
+    if (attendance_type) {
+      params.push(attendance_type);
+      queryText += ` AND a.attendance_type = $${params.length}`;
+    }
+
+    queryText += ' ORDER BY a.attendance_date DESC, a.period_number NULLS LAST, s.student_number';
 
     const result = await query(queryText, params);
 
@@ -774,6 +798,68 @@ router.get('/attendance/history', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'เกิดข้อผิดพลาดในการดึงข้อมูลการเช็คชื่อ'
+    });
+  }
+});
+
+// @route   GET /api/teacher/attendance/summary/:room_id
+// @desc    Get attendance summary for a specific room
+// @access  Teacher
+router.get('/attendance/summary/:room_id', async (req, res) => {
+  try {
+    const { room_id } = req.params;
+    const { start_date, end_date } = req.query;
+
+    // Get teacher id
+    const teacherResult = await query(
+      'SELECT id FROM teachers WHERE user_id = $1',
+      [req.user.id]
+    );
+
+    const teacherId = teacherResult.rows[0].id;
+
+    let queryText = `
+      SELECT 
+        s.id as student_id,
+        s.student_number,
+        s.full_name as student_name,
+        COUNT(CASE WHEN a.status = 'มาเรียน' THEN 1 END) as present,
+        COUNT(CASE WHEN a.status = 'มาสาย' THEN 1 END) as late,
+        COUNT(CASE WHEN a.status = 'ลาป่วย' THEN 1 END) as sick_leave,
+        COUNT(CASE WHEN a.status = 'ลากิจ' THEN 1 END) as personal_leave,
+        COUNT(CASE WHEN a.status = 'ขาดเรียน' THEN 1 END) as absent,
+        COUNT(*) as total_records
+      FROM students s
+      LEFT JOIN attendance a ON s.id = a.student_id
+      WHERE s.room_id = $1
+    `;
+    const params = [room_id];
+
+    if (start_date) {
+      params.push(start_date);
+      queryText += ` AND a.attendance_date >= $${params.length}`;
+    }
+
+    if (end_date) {
+      params.push(end_date);
+      queryText += ` AND a.attendance_date <= $${params.length}`;
+    }
+
+    queryText += ' GROUP BY s.id, s.student_number, s.full_name ORDER BY s.student_number';
+
+    const result = await query(queryText, params);
+
+    res.json({
+      success: true,
+      count: result.rows.length,
+      data: result.rows
+    });
+
+  } catch (error) {
+    console.error('Get attendance summary error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'เกิดข้อผิดพลาดในการดึงข้อมูลสรุปการเข้าเรียน'
     });
   }
 });

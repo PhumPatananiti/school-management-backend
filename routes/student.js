@@ -51,21 +51,28 @@ router.get('/profile', async (req, res) => {
 });
 
 // =====================================================
-// ATTENDANCE SUMMARY
+// ATTENDANCE SUMMARY - FIXED VERSION
 // =====================================================
 
 // @route   GET /api/student/attendance/summary
-// @desc    Get attendance summary
+// @desc    Get attendance summary (includes both homeroom and subject attendance)
 // @access  Student
 router.get('/attendance/summary', async (req, res) => {
   try {
-    const { academic_year, semester } = req.query;
+    const { academic_year, semester, attendance_type } = req.query;
 
     // Get student id
     const studentResult = await query(
       'SELECT id FROM students WHERE user_id = $1',
       [req.user.id]
     );
+
+    if (studentResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'ไม่พบข้อมูลนักเรียน'
+      });
+    }
 
     const studentId = studentResult.rows[0].id;
 
@@ -78,9 +85,15 @@ router.get('/attendance/summary', async (req, res) => {
         COUNT(CASE WHEN status = 'ขาดเรียน' THEN 1 END) as absent,
         COUNT(*) as total_days
       FROM attendance
-      WHERE student_id = $1 AND attendance_type = 'homeroom'
+      WHERE student_id = $1
     `;
     const params = [studentId];
+
+    // Optional: Filter by attendance type
+    if (attendance_type) {
+      params.push(attendance_type);
+      queryText += ` AND attendance_type = $${params.length}`;
+    }
 
     if (academic_year) {
       params.push(academic_year);
@@ -108,7 +121,7 @@ router.get('/attendance/summary', async (req, res) => {
 // @access  Student
 router.get('/attendance/detail', async (req, res) => {
   try {
-    const { start_date, end_date } = req.query;
+    const { start_date, end_date, attendance_type } = req.query;
 
     // Get student id
     const studentResult = await query(
@@ -116,13 +129,36 @@ router.get('/attendance/detail', async (req, res) => {
       [req.user.id]
     );
 
+    if (studentResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'ไม่พบข้อมูลนักเรียน'
+      });
+    }
+
     const studentId = studentResult.rows[0].id;
 
     let queryText = `
-      SELECT a.*, sub.subject_name, t.full_name as teacher_name
+      SELECT 
+        a.id,
+        a.student_id,
+        a.teacher_id,
+        a.room_id,
+        a.subject_id,
+        a.attendance_date,
+        a.period_number,
+        a.status,
+        a.attendance_type,
+        a.notes as note,
+        a.created_at as check_in_time,
+        sub.subject_name,
+        sub.subject_code,
+        t.full_name as teacher_name,
+        r.name as room_name
       FROM attendance a
       LEFT JOIN subjects sub ON a.subject_id = sub.id
       LEFT JOIN teachers t ON a.teacher_id = t.id
+      LEFT JOIN rooms r ON a.room_id = r.id
       WHERE a.student_id = $1
     `;
     const params = [studentId];
@@ -137,7 +173,12 @@ router.get('/attendance/detail', async (req, res) => {
       queryText += ` AND a.attendance_date <= $${params.length}`;
     }
 
-    queryText += ' ORDER BY a.attendance_date DESC, a.period_number';
+    if (attendance_type) {
+      params.push(attendance_type);
+      queryText += ` AND a.attendance_type = $${params.length}`;
+    }
+
+    queryText += ' ORDER BY a.attendance_date DESC, a.period_number NULLS LAST';
 
     const result = await query(queryText, params);
 
@@ -156,73 +197,14 @@ router.get('/attendance/detail', async (req, res) => {
   }
 });
 
-// @route   GET /api/student/grades
-// @desc    Get student grades
+// @route   GET /api/student/attendance/stats
+// @desc    Get attendance statistics breakdown by type
 // @access  Student
-router.get('/grades', async (req, res) => {
+router.get('/attendance/stats', async (req, res) => {
   try {
-    // Get student id from user
-    const studentResult = await query(
-      'SELECT id FROM students WHERE user_id = $1',
-      [req.user.id]
-    );
+    const { academic_year } = req.query;
 
-    if (studentResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'ไม่พบข้อมูลนักเรียน'
-      });
-    }
-
-    const studentId = studentResult.rows[0].id;
-    console.log('Executing grades query for student_id:', studentId);
-
-    // Get grades with subject information
-    const result = await query(
-      `SELECT 
-        g.id,
-        g.score_1,
-        g.score_2,
-        g.score_3,
-        g.score_4,
-        g.midterm_score,
-        g.final_score,
-        g.total_score,
-        g.grade,
-        s.subject_name,
-        s.subject_code,
-        t.full_name as teacher_name,
-        g.created_at,
-        g.updated_at
-       FROM grades g
-       INNER JOIN subjects s ON g.subject_id = s.id
-       LEFT JOIN teachers t ON g.teacher_id = t.id
-       WHERE g.student_id = $1
-       ORDER BY s.subject_name`,
-      [studentId]
-    );
-
-    res.json({
-      success: true,
-      count: result.rows.length,
-      data: result.rows
-    });
-
-  } catch (error) {
-    console.error('Get grades error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'เกิดข้อผิดพลาดในการดึงข้อมูล'
-    });
-  }
-});
-
-// @route   GET /api/student/grades/gpa
-// @desc    Get student GPA
-// @access  Student
-router.get('/grades/gpa', async (req, res) => {
-  try {
-    // Get student id from user
+    // Get student id
     const studentResult = await query(
       'SELECT id FROM students WHERE user_id = $1',
       [req.user.id]
@@ -237,62 +219,72 @@ router.get('/grades/gpa', async (req, res) => {
 
     const studentId = studentResult.rows[0].id;
 
-    // Calculate GPA
-    const result = await query(
-      `SELECT 
-        COUNT(*) as total_subjects,
-        AVG(g.total_score) as average_score,
-        COUNT(CASE WHEN g.grade = 'A' THEN 1 END) as grade_a_count,
-        COUNT(CASE WHEN g.grade = 'B' THEN 1 END) as grade_b_count,
-        COUNT(CASE WHEN g.grade = 'C' THEN 1 END) as grade_c_count,
-        COUNT(CASE WHEN g.grade = 'D' THEN 1 END) as grade_d_count,
-        COUNT(CASE WHEN g.grade = 'F' THEN 1 END) as grade_f_count
-       FROM grades g
-       WHERE g.student_id = $1`,
-      [studentId]
-    );
+    let queryText = `
+      SELECT 
+        attendance_type,
+        COUNT(CASE WHEN status = 'มาเรียน' THEN 1 END) as present,
+        COUNT(CASE WHEN status = 'มาสาย' THEN 1 END) as late,
+        COUNT(CASE WHEN status = 'ลาป่วย' THEN 1 END) as sick_leave,
+        COUNT(CASE WHEN status = 'ลากิจ' THEN 1 END) as personal_leave,
+        COUNT(CASE WHEN status = 'ขาดเรียน' THEN 1 END) as absent,
+        COUNT(*) as total_days
+      FROM attendance
+      WHERE student_id = $1
+    `;
+    const params = [studentId];
 
-    // Calculate GPA (A=4, B=3, C=2, D=1, F=0)
-    const stats = result.rows[0];
-    const totalSubjects = parseInt(stats.total_subjects);
-    
-    let gpa = 0;
-    if (totalSubjects > 0) {
-      const gradePoints = 
-        (parseInt(stats.grade_a_count) * 4) +
-        (parseInt(stats.grade_b_count) * 3) +
-        (parseInt(stats.grade_c_count) * 2) +
-        (parseInt(stats.grade_d_count) * 1) +
-        (parseInt(stats.grade_f_count) * 0);
-      
-      gpa = (gradePoints / totalSubjects).toFixed(2);
+    if (academic_year) {
+      params.push(academic_year);
+      queryText += ` AND EXTRACT(YEAR FROM attendance_date + INTERVAL '543 years') = $${params.length}`;
     }
 
-    res.json({
-      success: true,
-      data: {
-        gpa: parseFloat(gpa),
-        total_subjects: totalSubjects,
-        average_score: parseFloat(stats.average_score || 0).toFixed(2),
-        grade_distribution: {
-          A: parseInt(stats.grade_a_count),
-          B: parseInt(stats.grade_b_count),
-          C: parseInt(stats.grade_c_count),
-          D: parseInt(stats.grade_d_count),
-          F: parseInt(stats.grade_f_count)
-        }
+    queryText += ' GROUP BY attendance_type';
+
+    const result = await query(queryText, params);
+
+    // Format the response
+    const stats = {
+      homeroom: null,
+      subject: null,
+      total: {
+        present: 0,
+        late: 0,
+        sick_leave: 0,
+        personal_leave: 0,
+        absent: 0,
+        total_days: 0
       }
+    };
+
+    result.rows.forEach(row => {
+      if (row.attendance_type === 'homeroom') {
+        stats.homeroom = row;
+      } else if (row.attendance_type === 'subject') {
+        stats.subject = row;
+      }
+
+      // Calculate totals
+      stats.total.present += parseInt(row.present);
+      stats.total.late += parseInt(row.late);
+      stats.total.sick_leave += parseInt(row.sick_leave);
+      stats.total.personal_leave += parseInt(row.personal_leave);
+      stats.total.absent += parseInt(row.absent);
+      stats.total.total_days += parseInt(row.total_days);
+    });
+
+    res.json({
+      success: true,
+      data: stats
     });
 
   } catch (error) {
-    console.error('Get GPA error:', error);
+    console.error('Get attendance stats error:', error);
     res.status(500).json({
       success: false,
-      message: 'เกิดข้อผิดพลาดในการคำนวณ GPA'
+      message: 'เกิดข้อผิดพลาดในการดึงข้อมูลสถิติการเข้าเรียน'
     });
   }
 });
-
 // =====================================================
 // BEHAVIOR SCORE
 // =====================================================
