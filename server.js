@@ -10,6 +10,16 @@ const adminRoutes = require('./routes/admin');
 const teacherRoutes = require('./routes/teacher');
 const studentRoutes = require('./routes/student');
 
+// CORS configuration
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  'https://school-management-frontend-git-main-phum-patananitis-projects.vercel.app',
+  'https://school-management-frontend.vercel.app', // your main domain
+  /\.vercel\.app$/, // Allow all Vercel preview deployments
+  'http://localhost:3000'
+];
+
+
 // Initialize express app
 const app = express();
 
@@ -26,7 +36,19 @@ app.use('/api/', limiter);
 
 // CORS configuration
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.some(allowed => {
+      if (allowed instanceof RegExp) return allowed.test(origin);
+      return allowed === origin;
+    })) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
 }));
 
