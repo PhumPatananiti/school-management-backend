@@ -1,11 +1,21 @@
 const { Pool } = require('pg');
 
 const pool = new Pool({
+  // Use DATABASE_URL if available (for Render), otherwise use individual variables
+  connectionString: process.env.DATABASE_URL,
+  
+  // Fallback to individual variables for local development
   host: process.env.DB_HOST || 'localhost',
   port: process.env.DB_PORT || 3000,
   database: process.env.DB_NAME || 'postgres',
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD,
+  
+  // SSL configuration for production (Render requires this)
+  ssl: process.env.DATABASE_URL ? {
+    rejectUnauthorized: false
+  } : false,
+  
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 2000,
