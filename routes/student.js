@@ -218,7 +218,6 @@ router.get('/attendance/stats', async (req, res) => {
     }
 
     const studentId = studentResult.rows[0].id;
-
     let queryText = `
       SELECT 
         attendance_type,
@@ -285,6 +284,7 @@ router.get('/attendance/stats', async (req, res) => {
     });
   }
 });
+
 // =====================================================
 // BEHAVIOR SCORE
 // =====================================================
@@ -318,6 +318,146 @@ router.get('/behavior', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'เกิดข้อผิดพลาดในการดึงข้อมูลคะแนนความประพฤติ'
+    });
+  }
+});
+
+// =====================================================
+// GRADES
+// =====================================================
+
+// @route   GET /api/student/grades
+// @desc    Get student grades
+// @access  Student
+router.get('/grades', async (req, res) => {
+  try {
+    // Get student id from user
+    const studentResult = await query(
+      'SELECT id FROM students WHERE user_id = $1',
+      [req.user.id]
+    );
+
+    if (studentResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'ไม่พบข้อมูลนักเรียน'
+      });
+    }
+
+    const studentId = studentResult.rows[0].id;
+
+    // Get grades with subject information
+    const result = await query(
+      `SELECT 
+        g.id,
+        g.score_1,
+        g.score_2,
+        g.score_3,
+        g.score_4,
+        g.midterm_score,
+        g.final_score,
+        g.total_score,
+        g.grade,
+        s.subject_name,
+        s.subject_code,
+        t.full_name as teacher_name,
+        g.created_at,
+        g.updated_at
+       FROM grades g
+       INNER JOIN subjects s ON g.subject_id = s.id
+       LEFT JOIN teachers t ON g.teacher_id = t.id
+       WHERE g.student_id = $1
+       ORDER BY s.subject_name`,
+      [studentId]
+    );
+
+    res.json({
+      success: true,
+      count: result.rows.length,
+      data: result.rows
+    });
+
+  } catch (error) {
+    console.error('Get grades error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'เกิดข้อผิดพลาดในการดึงข้อมูล'
+    });
+  }
+});
+
+// @route   GET /api/student/grades/gpa
+// @desc    Get student GPA
+// @access  Student
+router.get('/grades/gpa', async (req, res) => {
+  try {
+    // Get student id from user
+    const studentResult = await query(
+      'SELECT id FROM students WHERE user_id = $1',
+      [req.user.id]
+    );
+
+    if (studentResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'ไม่พบข้อมูลนักเรียน'
+      });
+    }
+
+    const studentId = studentResult.rows[0].id;
+
+    // Calculate GPA
+    const result = await query(
+      `SELECT 
+        COUNT(*) as total_subjects,
+        AVG(g.total_score) as average_score,
+        COUNT(CASE WHEN g.grade = 'A' THEN 1 END) as grade_a_count,
+        COUNT(CASE WHEN g.grade = 'B' THEN 1 END) as grade_b_count,
+        COUNT(CASE WHEN g.grade = 'C' THEN 1 END) as grade_c_count,
+        COUNT(CASE WHEN g.grade = 'D' THEN 1 END) as grade_d_count,
+        COUNT(CASE WHEN g.grade = 'F' THEN 1 END) as grade_f_count
+       FROM grades g
+       WHERE g.student_id = $1`,
+      [studentId]
+    );
+
+    // Calculate GPA (A=4, B=3, C=2, D=1, F=0)
+    const stats = result.rows[0];
+    const totalSubjects = parseInt(stats.total_subjects);
+    
+    let gpa = 0;
+    if (totalSubjects > 0) {
+      const gradePoints = 
+        (parseInt(stats.grade_a_count) * 4) +
+        (parseInt(stats.grade_b_count) * 3) +
+        (parseInt(stats.grade_c_count) * 2) +
+        (parseInt(stats.grade_d_count) * 1) +
+        (parseInt(stats.grade_f_count) * 0);
+      
+      gpa = (gradePoints / totalSubjects).toFixed(2);
+    }
+
+    res.json({
+      success: true,
+      data: {
+        gpa: parseFloat(gpa),
+        total_subjects: totalSubjects,
+        average_score: parseFloat(stats.average_score || 0).toFixed(2),
+        grade_distribution: {
+          A: parseInt(stats.grade_a_count),
+          B: parseInt(stats.grade_b_count),
+          C: parseInt(stats.grade_c_count),
+          D: parseInt(stats.grade_d_count),
+          F: parseInt(stats.grade_f_count)
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Get GPA error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'เกิดข้อผิดพลาดในการคำนวณ GPA'
     });
   }
 });
@@ -504,24 +644,22 @@ router.get('/home-visits', async (req, res) => {
 // @route   GET /api/student/timetable
 // @desc    Get student timetable (placeholder - needs timetable table)
 // @access  Student
-router.get('/timetable', async (req, res) => {
-  try {
-    // This is a placeholder - you'll need to create a timetable table
-    // For now, return empty array
-    res.json({
-      success: true,
-      data: [],
-      message: 'ตารางเรียนยังไม่ได้ถูกสร้าง'
-    });
+// router.get('/timetable', async (req, res) => {
+//   try {
+//     res.json({
+//       success: true,
+//       data: [],
+//       message: 'ตารางเรียนยังไม่ได้ถูกสร้าง'
+//     });
 
-  } catch (error) {
-    console.error('Get timetable error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'เกิดข้อผิดพลาดในการดึงตารางเรียน'
-    });
-  }
-});
+//   } catch (error) {
+//     console.error('Get timetable error:', error);
+//     res.status(500).json({
+//       success: false,
+//       message: 'เกิดข้อผิดพลาดในการดึงตารางเรียน'
+//     });
+//   }
+// });
 
 // =====================================================
 // CLASSMATES

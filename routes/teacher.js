@@ -19,10 +19,30 @@ router.use(checkRole('teacher'));
 // @route   GET /api/teacher/profile
 // @desc    Get teacher profile
 // @access  Teacher
+// =====================================================
+// PROFILE
+// =====================================================
+
+// @route   GET /api/teacher/profile
+// @desc    Get teacher profile with homeroom information
+// @access  Teacher
+// @route   GET /api/teacher/profile
+// @desc    Get teacher profile with homeroom information
+// @access  Teacher
 router.get('/profile', async (req, res) => {
   try {
     const result = await query(
-      `SELECT t.*, r.name as homeroom_room_name, r.id as homeroom_room_id
+      `SELECT 
+        t.id,
+        t.teacher_id,
+        t.full_name,
+        t.email,
+        t.phone,
+        t.profile_picture,
+        t.homeroom_room_id,
+        r.name as homeroom_room_name,
+        r.grade_level as homeroom_grade_level,
+        t.created_at
        FROM teachers t
        LEFT JOIN rooms r ON t.homeroom_room_id = r.id
        WHERE t.user_id = $1`,
@@ -42,10 +62,10 @@ router.get('/profile', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Get profile error:', error);
+    console.error('Get teacher profile error:', error);
     res.status(500).json({
       success: false,
-      message: 'เกิดข้อผิดพลาดในการดึงข้อมูล'
+      message: 'เกิดข้อผิดพลาดในการดึงข้อมูลโปรไฟล์'
     });
   }
 });
@@ -55,30 +75,46 @@ router.get('/profile', async (req, res) => {
 // @access  Teacher
 router.put('/profile', async (req, res) => {
   try {
-    const { email, address, profile_picture } = req.body;
+    const { email, phone, profile_picture } = req.body;
 
+    // Get teacher id
+    const teacherResult = await query(
+      'SELECT id FROM teachers WHERE user_id = $1',
+      [req.user.id]
+    );
+
+    if (teacherResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'ไม่พบข้อมูลครู'
+      });
+    }
+
+    const teacherId = teacherResult.rows[0].id;
+
+    // Update profile
     const result = await query(
       `UPDATE teachers 
        SET email = COALESCE($1, email),
-           address = COALESCE($2, address),
+           phone = COALESCE($2, phone),
            profile_picture = COALESCE($3, profile_picture),
            updated_at = CURRENT_TIMESTAMP
-       WHERE user_id = $4
+       WHERE id = $4
        RETURNING *`,
-      [email, address, profile_picture, req.user.id]
+      [email, phone, profile_picture, teacherId]
     );
 
     res.json({
       success: true,
-      message: 'แก้ไขข้อมูลสำเร็จ',
+      message: 'อัปเดตโปรไฟล์สำเร็จ',
       data: result.rows[0]
     });
 
   } catch (error) {
-    console.error('Update profile error:', error);
+    console.error('Update teacher profile error:', error);
     res.status(500).json({
       success: false,
-      message: 'เกิดข้อผิดพลาดในการแก้ไขข้อมูล'
+      message: 'เกิดข้อผิดพลาดในการอัปเดตโปรไฟล์'
     });
   }
 });
