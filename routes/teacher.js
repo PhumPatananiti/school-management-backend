@@ -1650,4 +1650,74 @@ router.get('/students/:studentId/complete', async (req, res) => {
   }
 });
 
+// @route   PUT /api/teacher/students/:studentId/photo
+// @desc    Update student profile picture
+// @access  Teacher
+router.put('/students/:studentId/photo', async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const { profile_picture } = req.body; // Base64 image string
+
+    if (!profile_picture) {
+      return res.status(400).json({
+        success: false,
+        message: 'กรุณาอัปโหลดรูปภาพ'
+      });
+    }
+
+    // Get teacher id
+    const teacherResult = await query(
+      'SELECT id FROM teachers WHERE user_id = $1',
+      [req.user.id]
+    );
+
+    if (teacherResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'ไม่พบข้อมูลครู'
+      });
+    }
+
+    const teacherId = teacherResult.rows[0].id;
+
+    // Verify teacher has access to this student
+    const accessCheck = await query(
+      `SELECT s.id FROM students s
+       INNER JOIN teacher_rooms tr ON s.room_id = tr.room_id
+       WHERE s.id = $1 AND tr.teacher_id = $2`,
+      [studentId, teacherId]
+    );
+
+    if (accessCheck.rows.length === 0) {
+      return res.status(403).json({
+        success: false,
+        message: 'คุณไม่มีสิทธิ์แก้ไขข้อมูลนักเรียนนี้'
+      });
+    }
+
+    // Update student profile picture
+    const result = await query(
+      `UPDATE students 
+       SET profile_picture = $1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2
+       RETURNING id, profile_picture`,
+      [profile_picture, studentId]
+    );
+
+    res.json({
+      success: true,
+      message: 'อัปเดตรูปภาพสำเร็จ',
+      data: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error('Update student photo error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'เกิดข้อผิดพลาดในการอัปเดตรูปภาพ'
+    });
+  }
+});
+
 module.exports = router;

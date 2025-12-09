@@ -51,7 +51,7 @@ router.get('/profile', async (req, res) => {
 });
 
 // =====================================================
-// ATTENDANCE SUMMARY - FIXED VERSION
+// ATTENDANCE SUMMARY
 // =====================================================
 
 // @route   GET /api/student/attendance/summary
@@ -89,7 +89,6 @@ router.get('/attendance/summary', async (req, res) => {
     `;
     const params = [studentId];
 
-    // Optional: Filter by attendance type
     if (attendance_type) {
       params.push(attendance_type);
       queryText += ` AND attendance_type = $${params.length}`;
